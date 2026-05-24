@@ -15,10 +15,12 @@ const ENGLISH_PROMPTS = [
 ];
 
 export default function VoiceCoach() {
-  // App Config & Settings
-  const [engine, setEngine] = useState(() => localStorage.getItem('eng_coach_engine') || 'sandbox');
-  const [geminiKey, setGeminiKey] = useState(() => localStorage.getItem('eng_coach_gemini_key') || '');
-  const [sttProvider, setSttProvider] = useState(() => localStorage.getItem('eng_coach_stt') || 'browser');
+  const [geminiKey, setGeminiKey] = useState(() => {
+    const saved = localStorage.getItem('eng_coach_gemini_key');
+    if (saved && saved.trim() !== '') return saved;
+    return import.meta.env.VITE_GEMINI_API_KEY || '';
+  });
+  const [sttProvider, setSttProvider] = useState(() => localStorage.getItem('eng_coach_stt') || 'cloud');
   const [showSettings, setShowSettings] = useState(false);
   const [activeView, setActiveView] = useState('practice'); // practice, report, settings
   const [showTopicDrawer, setShowTopicDrawer] = useState(false);
@@ -48,7 +50,6 @@ export default function VoiceCoach() {
 
   // Save Settings to LocalStorage
   const saveSettings = () => {
-    localStorage.setItem('eng_coach_engine', engine);
     localStorage.setItem('eng_coach_gemini_key', geminiKey);
     localStorage.setItem('eng_coach_stt', sttProvider);
     setShowSettings(false);
@@ -68,7 +69,9 @@ export default function VoiceCoach() {
     setIsSTTSupported(hasSTT);
 
     if (!hasSTT) {
-      setSttProvider('manual');
+      if (sttProvider === 'browser') {
+        setSttProvider('cloud');
+      }
       return;
     }
 
@@ -164,6 +167,7 @@ export default function VoiceCoach() {
     
     if (sttProvider === 'browser' && recognitionRef.current) {
       try {
+        isRecordingRef.current = true;
         // CALL SYNCHRONOUSLY FIRST to guarantee Safari/iOS user interaction gesture is preserved
         recognitionRef.current.start();
         setIsRecording(true);
@@ -180,23 +184,58 @@ export default function VoiceCoach() {
         return;
       }
       try {
+        isRecordingRef.current = true;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorderRef.current = new MediaRecorder(stream);
         mediaRecorderRef.current.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunksRef.current.push(e.data);
         };
-        mediaRecorderRef.current.onstop = () => {
+        mediaRecorderRef.current.onstop = async () => {
           const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-          setStatusMsg('Recording completed. Processing...');
-          // In Sandbox mode, we simulate transcribing
-          if (engine === 'sandbox') {
-            simulateSTTAndAnalysis();
+          if (sttProvider === 'cloud') {
+            setStatusMsg('Recording completed. Sending to Cloud Whisper for high-accuracy STT...');
+            setIsLoading(true);
+            try {
+              const formData = new FormData();
+              formData.append('file', audioBlob, 'recording.wav');
+              formData.append('language', 'en'); // English Speeches
+              
+              const apiBase = import.meta.env.VITE_API_BASE || '';
+              const res = await fetch(`${apiBase}/v1/audio/transcriptions`, {
+                method: 'POST',
+                body: formData,
+              });
+              
+              if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(`Whisper API failure: ${res.status} - ${errText}`);
+              }
+              
+              const data = await res.json();
+              if (data && data.text) {
+                setTranscript(data.text.trim());
+                setStatusMsg('Cloud Whisper transcription successful. Review transcript below or click Analyze.');
+              } else {
+                throw new Error('No transcript text returned from server.');
+              }
+            } catch (err) {
+              console.error('Cloud Whisper STT failed:', err);
+              setStatusMsg(`Cloud Whisper failed: ${err.message}. Please try again or switch to Browser STT in settings.`);
+            } finally {
+              setIsLoading(false);
+            }
+          } else {
+            setStatusMsg('Recording completed. Review transcript or click Analyze Speech.');
           }
         };
         mediaRecorderRef.current.start();
         setIsRecording(true);
         setRecordingTime(0);
-        setStatusMsg('Recording mechanical audio... (Sandbox Mode)');
+        if (sttProvider === 'cloud') {
+          setStatusMsg('Listening (Cloud Whisper Mode)... Speak in English.');
+        } else {
+          setStatusMsg('Listening (Cloud Recording Mode)... Speak in English.');
+        }
       } catch (err) {
         console.error(err);
         setStatusMsg('Cannot access microphone. Please grant permission in browser settings.');
@@ -206,6 +245,7 @@ export default function VoiceCoach() {
 
   // Stop Recording
   const stopRecording = () => {
+    isRecordingRef.current = false;
     if (isRecording) {
       if (sttProvider === 'browser' && recognitionRef.current) {
         try {
@@ -222,99 +262,6 @@ export default function VoiceCoach() {
     }
   };
 
-  // Simulated transcription & scoring when no real API is configured
-  const simulateSTTAndAnalysis = () => {
-    setIsLoading(true);
-    setStatusMsg('Sandbox engine is analyzing speech...');
-    setTimeout(() => {
-      const dummyTranscripts = [
-        "I wake up at seven and I go to work by bus. It is normal and I like it because it is cheap.",
-        "To be honest, I think technology have a big impact in our life. People use phone too much and they don't talk together.",
-        "Well, my goal is to be a senior developer because I want to make complex system and write clean code."
-      ];
-      const selectedText = dummyTranscripts[Math.floor(Math.random() * dummyTranscripts.length)];
-      setTranscript(selectedText);
-      generateSandboxReport(selectedText);
-    }, 1500);
-  };
-
-  // Local Sandbox Grading Intelligence
-  const generateSandboxReport = (text) => {
-    setIsLoading(true);
-    setStatusMsg('Calculating assessment criteria...');
-    
-    setTimeout(() => {
-      const wordCount = text.split(/\s+/).filter(Boolean).length;
-      
-      // Look for Vietnamese patterns (if they spoke Vietnamese)
-      const vietnamesePattern = /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i;
-      const containsVietnamese = vietnamesePattern.test(text);
-
-      if (containsVietnamese) {
-        setAssessment({
-          overall_score: 1.0,
-          estimated_cefr: "A1",
-          estimated_ielts_speaking_band: "1.0",
-          brutally_honest_summary: "You are speaking/entering Vietnamese. Please speak entirely in English so I can evaluate and guide you!",
-          natural_rewritten_answer: "Please practice again in English to receive an optimal rewritten version.",
-          categories: {
-            grammar_and_sentence_structure: { score: 1.0, feedback: "System detected Vietnamese speech." },
-            vocabulary_and_word_choice: { score: 1.0, feedback: "Cannot evaluate English vocabulary." },
-            pronunciation_and_stt_clarity: { score: 1.0, feedback: "Clarity does not meet English requirements." },
-            fluency_and_cohesion: { score: 1.0, feedback: "Fluency cannot be evaluated." }
-          }
-        });
-        setIsLoading(false);
-        setStatusMsg('Evaluation completed.');
-        return;
-      }
-
-      // Simple metric math
-      const fillerWords = (text.match(/\b(like|um|ah|you know|basically|so|well)\b/ig) || []).length;
-      const pacingWpm = recordingTime > 0 ? Math.round((wordCount / recordingTime) * 60) : 135;
-
-      let baseScore = 6.0;
-      if (wordCount > 15) baseScore += 0.5;
-      if (wordCount > 30) baseScore += 0.5;
-      if (fillerWords < 2) baseScore += 0.5;
-      if (pacingWpm >= 110 && pacingWpm <= 150) baseScore += 0.5;
-
-      const finalScore = Math.min(9.0, Math.max(4.0, parseFloat(baseScore.toFixed(1))));
-      
-      let cefr = "B1";
-      if (finalScore >= 7.5) cefr = "C1";
-      else if (finalScore >= 6.5) cefr = "B2";
-      else if (finalScore < 5.0) cefr = "A2";
-
-      setAssessment({
-        overall_score: finalScore,
-        estimated_cefr: cefr,
-        estimated_ielts_speaking_band: finalScore.toString(),
-        brutally_honest_summary: `Good speech, reaching a length of ${wordCount} words. Your pronunciation is quite clear, but your speaking pace of ${pacingWpm} WPM can be further improved by extending sentences and minimizing abrupt pauses.`,
-        natural_rewritten_answer: text.replace(/\bhave\b/g, 'has').replace(/\btechnology have\b/g, 'technology has') + " That's why I am seeking a consistent schedule to optimize my learning path.",
-        categories: {
-          grammar_and_sentence_structure: {
-            score: Math.min(9.0, finalScore - 0.2),
-            feedback: "Relatively accurate sentence structure. Consider adding relative clauses (which, who, that) to turn simple sentences into complex ones."
-          },
-          vocabulary_and_word_choice: {
-            score: Math.min(9.0, finalScore + 0.3),
-            feedback: "Good basic conversational vocabulary usage. Try using more advanced synonyms like 'impactful' instead of 'good', 'inexpensive' instead of 'cheap'."
-          },
-          pronunciation_and_stt_clarity: {
-            score: Math.min(9.0, finalScore),
-            feedback: "Vocabulary clarity is stable. Pay attention to pronouncing ending sounds like /s/, /t/, /d/."
-          },
-          fluency_and_cohesion: {
-            score: Math.min(9.0, finalScore - 0.1),
-            feedback: `You used ${fillerWords} filler words. Try to master silent pauses instead of uttering prolonged sounds like 'um', 'ah'.`
-          }
-        }
-      });
-      setIsLoading(false);
-      setStatusMsg('Speech evaluation completed.');
-    }, 1500);
-  };
 
   // Call Gemini API directly from the browser (100% Client-side!)
   const analyzeWithGemini = async (textToAnalyze) => {
@@ -326,15 +273,10 @@ export default function VoiceCoach() {
     setIsLoading(true);
     setStatusMsg('Connecting directly to Google Gemini API...');
 
-    // Language check for prompt
     const systemInstruction = `
       You are an expert, strict, and encouraging English speaking coach.
       Analyze the user's transcript of speaking.
       
-      CRITICAL LANGUAGE CHECK:
-      If the user speaks or inputs Vietnamese (even in transcript), you MUST set "overall_score" to 1.0 and all other score categories to 1.0. Set "brutally_honest_summary" and all category feedback to this EXACT warning: "You spoke/input in Vietnamese. Please speak entirely in English so I can evaluate and guide you!". Set "natural_rewritten_answer" to a natural English translation of what they tried to say in Vietnamese.
-
-      For normal English speech:
       Evaluate on four IELTS-aligned categories:
       1. grammar_and_sentence_structure
       2. vocabulary_and_word_choice
@@ -391,8 +333,7 @@ export default function VoiceCoach() {
       setStatusMsg('Received feedback from Gemini API.');
     } catch (err) {
       console.error(err);
-      setStatusMsg(`Gemini connection error: ${err.message}. Switching to Sandbox simulator.`);
-      generateSandboxReport(textToAnalyze);
+      setStatusMsg(`Gemini evaluation failed: ${err.message}. Please check your API key or connection.`);
     } finally {
       setIsLoading(false);
     }
@@ -406,10 +347,11 @@ export default function VoiceCoach() {
       return;
     }
     
-    if (engine === 'gemini' && geminiKey) {
+    if (geminiKey.trim()) {
       analyzeWithGemini(textToAnalyze);
     } else {
-      generateSandboxReport(textToAnalyze);
+      setStatusMsg('API Key required. Redirecting to Settings...');
+      setActiveView('settings');
     }
   };
 
@@ -458,7 +400,7 @@ export default function VoiceCoach() {
           </div>
 
           <div className="px-2 py-0.5 rounded border border-[#E5E3DF] bg-white text-[8px] text-[#2E4036] font-mono font-bold shadow-2xs">
-            {engine === 'sandbox' ? 'SANDBOX' : 'GEMINI DIRECT'}
+            GEMINI AI
           </div>
         </header>
 
@@ -691,35 +633,25 @@ export default function VoiceCoach() {
               </h3>
 
               <div className="space-y-4 flex-1">
-                {/* Grading Engine Selection */}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Grading Method (LLM)</label>
-                  <select
-                    value={engine}
-                    onChange={(e) => setEngine(e.target.value)}
-                    className="w-full bg-white border border-[#E5E3DF] rounded-xl p-3 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#2E4036]"
-                  >
-                    <option value="sandbox">Sandbox (Offline - 100% Free)</option>
-                    <option value="gemini">Google Gemini API (Direct Client)</option>
-                  </select>
-                </div>
-
                 {/* Gemini Key */}
-                {engine === 'gemini' && (
-                  <div className="flex flex-col gap-1.5 animate-in fade-in duration-200">
-                    <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Google Gemini API Key</label>
-                    <input
-                      type="password"
-                      value={geminiKey}
-                      onChange={(e) => setGeminiKey(e.target.value)}
-                      placeholder="AIzaSy..."
-                      className="w-full bg-white border border-[#E5E3DF] rounded-xl p-3 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#2E4036]"
-                    />
-                    <p className="text-[8px] text-[#7A7875] leading-relaxed">
-                      🔑 Key is saved directly in your browser's LocalStorage. Never sent to any intermediary server. Absolute privacy guaranteed.
+                <div className="flex flex-col gap-1.5 animate-in fade-in duration-200">
+                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Google Gemini API Key</label>
+                  <input
+                    type="password"
+                    value={geminiKey}
+                    onChange={(e) => setGeminiKey(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-white border border-[#E5E3DF] rounded-xl p-3 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#2E4036]"
+                  />
+                  {!geminiKey && (
+                    <p className="text-[9px] font-bold text-[#CC5833] animate-pulse">
+                      ⚠️ An API Key is required for strict Gemini AI grading.
                     </p>
-                  </div>
-                )}
+                  )}
+                  <p className="text-[8px] text-[#7A7875] leading-relaxed">
+                    🔑 Key is saved directly in your browser's LocalStorage. Never sent to any intermediary server. Absolute privacy guaranteed.
+                  </p>
+                </div>
 
                 {/* STT Selection */}
                 <div className="flex flex-col gap-1.5">
@@ -729,8 +661,8 @@ export default function VoiceCoach() {
                     onChange={(e) => setSttProvider(e.target.value)}
                     className="w-full bg-white border border-[#E5E3DF] rounded-xl p-3 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#2E4036]"
                   >
-                    <option value="browser">Browser Web Speech API (NATIVE - Recommended)</option>
-                    <option value="mechanical">Mechanical Audio (Sandbox simulator)</option>
+                    <option value="browser">Browser Web Speech API (NATIVE)</option>
+                    <option value="cloud">Cloud Whisper API (Highly Accurate)</option>
                   </select>
                 </div>
               </div>
