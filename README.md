@@ -1,4 +1,4 @@
-# Voice Coach & AI Gateway
+# Voice Coach 
 
 A powerful, high-fidelity AI-powered Voice Coach and Multi-Provider AI Routing Gateway. This project provides real-time spoken English training and mock interview evaluations by transcribing speech and utilizing state-of-the-art LLMs to analyze content quality, fluency, pronunciation, grammar, vocabulary, and delivery metrics.
 
