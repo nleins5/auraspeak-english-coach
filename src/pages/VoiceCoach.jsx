@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { 
   GraduationCap, Mic, Square, Settings, Volume2, Play, Pause, Loader2,
   Sparkles, BookOpen, Award, AlertCircle, CheckCircle2, 
-  ChevronRight, RefreshCw, Layers, ShieldCheck, HelpCircle
+  ChevronRight, RefreshCw
 } from 'lucide-react';
 import gsap from 'gsap';
 
@@ -21,7 +21,7 @@ export default function VoiceCoach() {
     return import.meta.env.VITE_GEMINI_API_KEY || '';
   });
   const [sttProvider, setSttProvider] = useState(() => localStorage.getItem('eng_coach_stt') || 'cloud');
-  const [showSettings, setShowSettings] = useState(false);
+  const [, setShowSettings] = useState(false);
   const [activeView, setActiveView] = useState('practice'); // practice, report, settings
   const [showTopicDrawer, setShowTopicDrawer] = useState(false);
 
@@ -82,13 +82,10 @@ export default function VoiceCoach() {
     rec.lang = 'en-US';
 
     rec.onresult = (event) => {
-      let interimTranscript = '';
       let finalTranscript = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         if (event.results[i].isFinal) {
           finalTranscript += event.results[i][0].transcript;
-        } else {
-          interimTranscript += event.results[i][0].transcript;
         }
       }
       if (finalTranscript) {
@@ -126,9 +123,11 @@ export default function VoiceCoach() {
     return () => {
       try {
         rec.stop();
-      } catch (err) {}
+      } catch {
+        // Ignore cleanup errors when recognition was never started.
+      }
     };
-  }, []);
+  }, [sttProvider]);
 
   // Timer Effect
   useEffect(() => {
@@ -250,12 +249,16 @@ export default function VoiceCoach() {
       if (sttProvider === 'browser' && recognitionRef.current) {
         try {
           recognitionRef.current.stop();
-        } catch (err) {}
+        } catch {
+          // Ignore stop errors when recognition is already inactive.
+        }
       }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         try {
           mediaRecorderRef.current.stop();
-        } catch (err) {}
+        } catch {
+          // Ignore stop errors when recorder is already inactive.
+        }
       }
       setIsRecording(false);
       setStatusMsg('Recording stopped. Click "Analyze Speech" to get feedback.');
