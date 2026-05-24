@@ -263,77 +263,47 @@ export default function VoiceCoach() {
   };
 
 
-  // Call Gemini API directly from the browser (100% Client-side!)
+  // Call AI Coaching API via Unified Router AI Endpoint
   const analyzeWithGemini = async (textToAnalyze) => {
-    if (!geminiKey) {
-      setStatusMsg('Missing Gemini API Key. Please configure it in Settings (gear icon).');
-      return;
-    }
-    
     setIsLoading(true);
-    setStatusMsg('Connecting directly to Google Gemini API...');
-
-    const systemInstruction = `
-      You are an expert, strict, and encouraging English speaking coach.
-      Analyze the user's transcript of speaking.
-      
-      Evaluate on four IELTS-aligned categories:
-      1. grammar_and_sentence_structure
-      2. vocabulary_and_word_choice
-      3. pronunciation_and_stt_clarity
-      4. fluency_and_cohesion
-
-      Provide the response in raw JSON format strictly matching this structure:
-      {
-        "overall_score": 7.5,
-        "estimated_cefr": "B2",
-        "estimated_ielts_speaking_band": "7.5",
-        "brutally_honest_summary": "English explanation of their speech strength and weakness...",
-        "natural_rewritten_answer": "An optimized, natural, native-level rewrite of their answer...",
-        "categories": {
-          "grammar_and_sentence_structure": { "score": 7.0, "feedback": "Detailed feedback in English..." },
-          "vocabulary_and_word_choice": { "score": 8.0, "feedback": "Detailed feedback in English..." },
-          "pronunciation_and_stt_clarity": { "score": 7.5, "feedback": "Detailed feedback in English..." },
-          "fluency_and_cohesion": { "score": 7.5, "feedback": "Detailed feedback in English..." }
-        }
-      }
-    `;
+    setStatusMsg('Connecting to AI Coach...');
 
     try {
+      const baseUrl = import.meta.env.VITE_ROUTER_AI_URL || 'http://localhost:8000';
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+      
+      // If client-side geminiKey is available, pass it in headers or use it as fallback
+      if (geminiKey.trim()) {
+        headers['Authorization'] = `Bearer ${geminiKey}`;
+      }
+
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+        `${baseUrl}/v1/chat/english`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: headers,
           body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: `${systemInstruction}\n\nHere is the user's transcript to analyze: "${textToAnalyze}"` }
-                ]
-              }
-            ],
-            generationConfig: {
-              responseMimeType: "application/json"
-            }
+            query: textToAnalyze,
+            task: 'english',
+            model_override: 'gemini'
           })
         }
       );
 
       if (!response.ok) {
-        throw new Error(`Gemini API Error: Status ${response.status}`);
+        throw new Error(`AI Coach Error: Status ${response.status}`);
       }
 
       const data = await response.json();
-      const rawText = data.candidates[0].content.parts[0].text;
+      const rawText = data.answer;
       const parsed = JSON.parse(rawText.trim());
       setAssessment(parsed);
-      setStatusMsg('Received feedback from Gemini API.');
+      setStatusMsg('Received feedback from AI Coach.');
     } catch (err) {
       console.error(err);
-      setStatusMsg(`Gemini evaluation failed: ${err.message}. Please check your API key or connection.`);
+      setStatusMsg(`AI Coach evaluation failed: ${err.message}.`);
     } finally {
       setIsLoading(false);
     }
@@ -347,10 +317,11 @@ export default function VoiceCoach() {
       return;
     }
     
-    if (geminiKey.trim()) {
+    const routerUrl = import.meta.env.VITE_ROUTER_AI_URL;
+    if (geminiKey.trim() || routerUrl) {
       analyzeWithGemini(textToAnalyze);
     } else {
-      setStatusMsg('API Key required. Redirecting to Settings...');
+      setStatusMsg('API Key or Router URL required. Redirecting to Settings...');
       setActiveView('settings');
     }
   };
