@@ -199,8 +199,7 @@ export default function VoiceCoach() {
               formData.append('file', audioBlob, 'recording.wav');
               formData.append('language', 'en'); // English Speeches
               
-              const apiBase = import.meta.env.VITE_API_BASE || '';
-              const res = await fetch(`${apiBase}/v1/audio/transcriptions`, {
+              const res = await fetch('/v1/audio/transcriptions', {
                 method: 'POST',
                 body: formData,
               });
@@ -272,7 +271,6 @@ export default function VoiceCoach() {
     setStatusMsg('Connecting to AI Coach...');
 
     try {
-      const baseUrl = import.meta.env.VITE_ROUTER_AI_URL || 'http://localhost:8000';
       const headers = {
         'Content-Type': 'application/json',
       };
@@ -283,7 +281,7 @@ export default function VoiceCoach() {
       }
 
       const response = await fetch(
-        `${baseUrl}/v1/chat/english`,
+        '/v1/chat/english',
         {
           method: 'POST',
           headers: headers,
@@ -320,13 +318,7 @@ export default function VoiceCoach() {
       return;
     }
     
-    const routerUrl = import.meta.env.VITE_ROUTER_AI_URL;
-    if (geminiKey.trim() || routerUrl) {
-      analyzeWithGemini(textToAnalyze);
-    } else {
-      setStatusMsg('API Key or Router URL required. Redirecting to Settings...');
-      setActiveView('settings');
-    }
+    analyzeWithGemini(textToAnalyze);
   };
 
   return (
