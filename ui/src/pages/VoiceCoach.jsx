@@ -32,7 +32,7 @@ export default function VoiceCoach() {
   const [transcript, setTranscript] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [statusMsg, setStatusMsg] = useState('Sẵn sàng luyện nói. Chọn một chủ đề bên dưới hoặc nói tự do!');
+  const [statusMsg, setStatusMsg] = useState('Ready to practice speaking. Select a topic below or practice freely!');
   
   // Analytics States
   const [isLoading, setIsLoading] = useState(false);
@@ -52,43 +52,79 @@ export default function VoiceCoach() {
     localStorage.setItem('eng_coach_gemini_key', geminiKey);
     localStorage.setItem('eng_coach_stt', sttProvider);
     setShowSettings(false);
-    setStatusMsg('Cấu hình đã được lưu thành công.');
+    setStatusMsg('Settings saved successfully.');
     setActiveView('practice');
   };
 
+  const [isSTTSupported, setIsSTTSupported] = useState(true);
+  const isRecordingRef = useRef(false);
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
   // Browser STT Setup (Web Speech API)
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const rec = new SpeechRecognition();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = 'en-US';
+    const hasSTT = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+    setIsSTTSupported(hasSTT);
 
-      rec.onresult = (event) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-        if (finalTranscript) {
-          setTranscript(prev => (prev + ' ' + finalTranscript).trim());
-        }
-      };
-
-      rec.onerror = (e) => {
-        console.error('STT Error:', e);
-        if (e.error === 'not-allowed') {
-          setStatusMsg('Không được cấp quyền Micro. Vui lòng kiểm tra cài đặt trình duyệt.');
-        }
-      };
-
-      recognitionRef.current = rec;
+    if (!hasSTT) {
+      setSttProvider('manual');
+      return;
     }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SpeechRecognition();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+
+    rec.onresult = (event) => {
+      let interimTranscript = '';
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interimTranscript += event.results[i][0].transcript;
+        }
+      }
+      if (finalTranscript) {
+        setTranscript(prev => (prev + ' ' + finalTranscript).trim());
+      }
+    };
+
+    rec.onerror = (e) => {
+      console.error('STT Error:', e);
+      if (e.error === 'not-allowed') {
+        setStatusMsg('Error: Microphone access denied. Please grant microphone permissions in your browser settings to speak.');
+      } else if (e.error === 'network') {
+        setStatusMsg('Network Error: Unable to reach Google Speech servers. Please check your internet connection.');
+      } else if (e.error === 'no-speech') {
+        console.warn('No English speech detected...');
+      } else {
+        setStatusMsg(`Speech recognition error: ${e.error}`);
+      }
+    };
+
+    rec.onend = () => {
+      // Auto-restart if we are still supposed to be recording
+      if (isRecordingRef.current) {
+        try {
+          rec.start();
+          console.log('SpeechRecognition auto-restarted.');
+        } catch (err) {
+          console.error('SpeechRecognition auto-restart failed:', err);
+        }
+      }
+    };
+
+    recognitionRef.current = rec;
+
+    return () => {
+      try {
+        rec.stop();
+      } catch (err) {}
+    };
   }, []);
 
   // Timer Effect
@@ -128,18 +164,31 @@ export default function VoiceCoach() {
     
     if (sttProvider === 'browser' && recognitionRef.current) {
       try {
+        // Pre-emptive microphone permission request to trigger OS/Browser prompt reliably
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          // Stop track immediately as Web Speech API will request its own connection
+          tempStream.getTracks().forEach(track => track.stop());
+        }
+      } catch (err) {
+        console.warn('Microphone permission pre-check failed or denied:', err);
+        setStatusMsg('Error: Microphone permission was not granted. Please allow microphone access in your browser settings.');
+        return;
+      }
+
+      try {
         recognitionRef.current.start();
         setIsRecording(true);
         setRecordingTime(0);
-        setStatusMsg('Đang lắng nghe... Nói bằng tiếng Anh để tôi chuyển ngữ.');
+        setStatusMsg('Listening... Speak in English to transcribe.');
       } catch (err) {
         console.error(err);
-        setStatusMsg('Lỗi khi kích hoạt nhận diện giọng nói trình duyệt.');
+        setStatusMsg('Error activating browser speech recognition.');
       }
     } else {
       // Standard audio recorder for API fallback
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setStatusMsg('Trình duyệt không hỗ trợ ghi âm.');
+        setStatusMsg('Browser does not support audio recording.');
         return;
       }
       try {
@@ -150,7 +199,7 @@ export default function VoiceCoach() {
         };
         mediaRecorderRef.current.onstop = () => {
           const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-          setStatusMsg('Đã ghi âm xong. Đang xử lý...');
+          setStatusMsg('Recording completed. Processing...');
           // In Sandbox mode, we simulate transcribing
           if (engine === 'sandbox') {
             simulateSTTAndAnalysis();
@@ -159,10 +208,10 @@ export default function VoiceCoach() {
         mediaRecorderRef.current.start();
         setIsRecording(true);
         setRecordingTime(0);
-        setStatusMsg('Đang ghi âm audio cơ học... (Sandbox Mode)');
+        setStatusMsg('Recording mechanical audio... (Sandbox Mode)');
       } catch (err) {
         console.error(err);
-        setStatusMsg('Không thể truy cập Microphone.');
+        setStatusMsg('Cannot access microphone.');
       }
     }
   };
@@ -171,20 +220,24 @@ export default function VoiceCoach() {
   const stopRecording = () => {
     if (isRecording) {
       if (sttProvider === 'browser' && recognitionRef.current) {
-        recognitionRef.current.stop();
+        try {
+          recognitionRef.current.stop();
+        } catch (err) {}
       }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
+        try {
+          mediaRecorderRef.current.stop();
+        } catch (err) {}
       }
       setIsRecording(false);
-      setStatusMsg('Đã dừng ghi âm. Bấm "Phân tích bài nói" để bắt đầu nhận đánh giá.');
+      setStatusMsg('Recording stopped. Click "Analyze Speech" to get feedback.');
     }
   };
 
   // Simulated transcription & scoring when no real API is configured
   const simulateSTTAndAnalysis = () => {
     setIsLoading(true);
-    setStatusMsg('Hệ thống Sandbox đang phân tích giọng nói...');
+    setStatusMsg('Sandbox engine is analyzing speech...');
     setTimeout(() => {
       const dummyTranscripts = [
         "I wake up at seven and I go to work by bus. It is normal and I like it because it is cheap.",
@@ -200,7 +253,7 @@ export default function VoiceCoach() {
   // Local Sandbox Grading Intelligence
   const generateSandboxReport = (text) => {
     setIsLoading(true);
-    setStatusMsg('Đang tính toán tiêu chí đánh giá...');
+    setStatusMsg('Calculating assessment criteria...');
     
     setTimeout(() => {
       const wordCount = text.split(/\s+/).filter(Boolean).length;
@@ -214,17 +267,17 @@ export default function VoiceCoach() {
           overall_score: 1.0,
           estimated_cefr: "A1",
           estimated_ielts_speaking_band: "1.0",
-          brutally_honest_summary: "Bạn đang nói/nhập tiếng Việt. Vui lòng nói hoàn toàn bằng tiếng Anh để tôi có thể đánh giá và hướng dẫn bạn!",
-          natural_rewritten_answer: "Vui lòng luyện tập lại bằng tiếng Anh để nhận bản dịch viết lại tối ưu.",
+          brutally_honest_summary: "You are speaking/entering Vietnamese. Please speak entirely in English so I can evaluate and guide you!",
+          natural_rewritten_answer: "Please practice again in English to receive an optimal rewritten version.",
           categories: {
-            grammar_and_sentence_structure: { score: 1.0, feedback: "Hệ thống phát hiện câu nói chứa tiếng Việt." },
-            vocabulary_and_word_choice: { score: 1.0, feedback: "Không thể chấm từ vựng tiếng Anh." },
-            pronunciation_and_stt_clarity: { score: 1.0, feedback: "Độ rõ nét không đạt yêu cầu tiếng Anh." },
-            fluency_and_cohesion: { score: 1.0, feedback: "Trôi chảy không thể đánh giá." }
+            grammar_and_sentence_structure: { score: 1.0, feedback: "System detected Vietnamese speech." },
+            vocabulary_and_word_choice: { score: 1.0, feedback: "Cannot evaluate English vocabulary." },
+            pronunciation_and_stt_clarity: { score: 1.0, feedback: "Clarity does not meet English requirements." },
+            fluency_and_cohesion: { score: 1.0, feedback: "Fluency cannot be evaluated." }
           }
         });
         setIsLoading(false);
-        setStatusMsg('Đã hoàn tất đánh giá.');
+        setStatusMsg('Evaluation completed.');
         return;
       }
 
@@ -249,41 +302,41 @@ export default function VoiceCoach() {
         overall_score: finalScore,
         estimated_cefr: cefr,
         estimated_ielts_speaking_band: finalScore.toString(),
-        brutally_honest_summary: `Bài nói tốt, độ dài đạt ${wordCount} từ. Bạn phát âm khá rõ ràng, tuy nhiên nhịp điệu nói đạt ${pacingWpm} WPM có thể cải thiện thêm bằng cách kéo dài câu và hạn chế ngắt nghỉ đột ngột.`,
+        brutally_honest_summary: `Good speech, reaching a length of ${wordCount} words. Your pronunciation is quite clear, but your speaking pace of ${pacingWpm} WPM can be further improved by extending sentences and minimizing abrupt pauses.`,
         natural_rewritten_answer: text.replace(/\bhave\b/g, 'has').replace(/\btechnology have\b/g, 'technology has') + " That's why I am seeking a consistent schedule to optimize my learning path.",
         categories: {
           grammar_and_sentence_structure: {
             score: Math.min(9.0, finalScore - 0.2),
-            feedback: "Cấu trúc câu tương đối chính xác. Nên bổ sung thêm các mệnh đề quan hệ (which, who, that) để biến câu đơn thành câu phức tạp."
+            feedback: "Relatively accurate sentence structure. Consider adding relative clauses (which, who, that) to turn simple sentences into complex ones."
           },
           vocabulary_and_word_choice: {
             score: Math.min(9.0, finalScore + 0.3),
-            feedback: "Sử dụng từ vựng ở mức đàm thoại cơ bản tốt. Thử sử dụng các từ đồng nghĩa cao cấp hơn như 'impactful' thay vì 'good', 'inexpensive' thay vì 'cheap'."
+            feedback: "Good basic conversational vocabulary usage. Try using more advanced synonyms like 'impactful' instead of 'good', 'inexpensive' instead of 'cheap'."
           },
           pronunciation_and_stt_clarity: {
             score: Math.min(9.0, finalScore),
-            feedback: "Độ rõ từ vựng được nhận diện ổn định. Chú ý phát âm rõ âm cuối (ending sounds) như /s/, /t/, /d/."
+            feedback: "Vocabulary clarity is stable. Pay attention to pronouncing ending sounds like /s/, /t/, /d/."
           },
           fluency_and_cohesion: {
             score: Math.min(9.0, finalScore - 0.1),
-            feedback: `Bạn sử dụng ${fillerWords} từ thừa (filler words). Hãy cố gắng làm chủ các khoảng dừng im lặng thay vì phát âm âm kéo dài như 'um', 'ah'.`
+            feedback: `You used ${fillerWords} filler words. Try to master silent pauses instead of uttering prolonged sounds like 'um', 'ah'.`
           }
         }
       });
       setIsLoading(false);
-      setStatusMsg('Đã hoàn tất đánh giá bài nói.');
+      setStatusMsg('Speech evaluation completed.');
     }, 1500);
   };
 
   // Call Gemini API directly from the browser (100% Client-side!)
   const analyzeWithGemini = async (textToAnalyze) => {
     if (!geminiKey) {
-      setStatusMsg('Thiếu Gemini API Key. Hãy cấu hình trong Cài Đặt (icon bánh răng).');
+      setStatusMsg('Missing Gemini API Key. Please configure it in Settings (gear icon).');
       return;
     }
     
     setIsLoading(true);
-    setStatusMsg('Đang kết nối trực tiếp tới Google Gemini API...');
+    setStatusMsg('Connecting directly to Google Gemini API...');
 
     // Language check for prompt
     const systemInstruction = `
@@ -291,7 +344,7 @@ export default function VoiceCoach() {
       Analyze the user's transcript of speaking.
       
       CRITICAL LANGUAGE CHECK:
-      If the user speaks or inputs Vietnamese (even in transcript), you MUST set "overall_score" to 1.0 and all other score categories to 1.0. Set "brutally_honest_summary" and all category feedback to this EXACT Vietnamese warning: "Bạn đang nói/nhập tiếng Việt. Vui lòng nói hoàn toàn bằng tiếng Anh để tôi có thể đánh giá và hướng dẫn bạn!". Set "natural_rewritten_answer" to a natural English translation of what they tried to say in Vietnamese.
+      If the user speaks or inputs Vietnamese (even in transcript), you MUST set "overall_score" to 1.0 and all other score categories to 1.0. Set "brutally_honest_summary" and all category feedback to this EXACT warning: "You spoke/input in Vietnamese. Please speak entirely in English so I can evaluate and guide you!". Set "natural_rewritten_answer" to a natural English translation of what they tried to say in Vietnamese.
 
       For normal English speech:
       Evaluate on four IELTS-aligned categories:
@@ -305,13 +358,13 @@ export default function VoiceCoach() {
         "overall_score": 7.5,
         "estimated_cefr": "B2",
         "estimated_ielts_speaking_band": "7.5",
-        "brutally_honest_summary": "Vietnamese explanation of their speech strength and weakness...",
+        "brutally_honest_summary": "English explanation of their speech strength and weakness...",
         "natural_rewritten_answer": "An optimized, natural, native-level rewrite of their answer...",
         "categories": {
-          "grammar_and_sentence_structure": { "score": 7.0, "feedback": "Detailed feedback in Vietnamese..." },
-          "vocabulary_and_word_choice": { "score": 8.0, "feedback": "Detailed feedback in Vietnamese..." },
-          "pronunciation_and_stt_clarity": { "score": 7.5, "feedback": "Detailed feedback in Vietnamese..." },
-          "fluency_and_cohesion": { "score": 7.5, "feedback": "Detailed feedback in Vietnamese..." }
+          "grammar_and_sentence_structure": { "score": 7.0, "feedback": "Detailed feedback in English..." },
+          "vocabulary_and_word_choice": { "score": 8.0, "feedback": "Detailed feedback in English..." },
+          "pronunciation_and_stt_clarity": { "score": 7.5, "feedback": "Detailed feedback in English..." },
+          "fluency_and_cohesion": { "score": 7.5, "feedback": "Detailed feedback in English..." }
         }
       }
     `;
@@ -347,10 +400,10 @@ export default function VoiceCoach() {
       const rawText = data.candidates[0].content.parts[0].text;
       const parsed = JSON.parse(rawText.trim());
       setAssessment(parsed);
-      setStatusMsg('Đã nhận phản hồi từ Gemini API.');
+      setStatusMsg('Received feedback from Gemini API.');
     } catch (err) {
       console.error(err);
-      setStatusMsg(`Lỗi kết nối Gemini: ${err.message}. Đang chuyển về Sandbox mô phỏng.`);
+      setStatusMsg(`Gemini connection error: ${err.message}. Switching to Sandbox simulator.`);
       generateSandboxReport(textToAnalyze);
     } finally {
       setIsLoading(false);
@@ -361,7 +414,7 @@ export default function VoiceCoach() {
   const handleAnalyze = () => {
     const textToAnalyze = transcript.trim() || textInput.trim();
     if (!textToAnalyze) {
-      setStatusMsg('Vui lòng nhập văn bản hoặc ghi âm trước khi chấm điểm.');
+      setStatusMsg('Please input text or record your voice before grading.');
       return;
     }
     
@@ -434,30 +487,36 @@ export default function VoiceCoach() {
                 <div className="flex items-center gap-1.5 text-[9px] font-mono text-white/70 uppercase tracking-widest mb-1.5 font-bold">
                   <BookOpen size={10} /> Active Prompt
                 </div>
-                <h3 className="text-xs font-extrabold text-[#F2F0E9] mb-1">{isUsingCustom ? 'Chủ đề tự do' : activePrompt.topic}</h3>
+                <h3 className="text-xs font-extrabold text-[#F2F0E9] mb-1">{isUsingCustom ? 'Free Topic' : activePrompt.topic}</h3>
                 <p className="text-xs font-serif italic text-white/95 leading-relaxed">
-                  "{isUsingCustom ? (customPrompt || 'Nhập câu hỏi tự do của bạn bên dưới...') : activePrompt.desc}"
+                  "{isUsingCustom ? (customPrompt || 'Enter your custom question below...') : activePrompt.desc}"
                 </p>
                 
                 <button
                   onClick={() => setShowTopicDrawer(true)}
                   className="mt-3.5 px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/20 text-[9px] font-bold flex items-center gap-1 border border-white/10 transition-all cursor-pointer"
                 >
-                  Thay đổi chủ đề <ChevronRight size={10} />
+                  Change Topic <ChevronRight size={10} />
                 </button>
               </div>
 
               {/* Speech transcript output block */}
               <div className="bg-white rounded-[2.2rem] border border-[#E5E3DF] p-5 shadow-2xs flex-1 flex flex-col gap-3 min-h-[140px] relative overflow-hidden">
-                <div className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold shrink-0">Bản ghi trực tiếp</div>
+                <div className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold shrink-0">Live Transcript</div>
                 
                 <div className="flex-1 overflow-y-auto text-xs text-[#1A1A1A] leading-relaxed pr-1 select-text">
+                  {!isSTTSupported && (
+                    <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[10px] leading-normal flex items-start gap-2 shrink-0">
+                      <span className="text-amber-600 font-bold shrink-0">⚠️ NOTE:</span>
+                      <span>Your current browser doesn't support live speech-to-text (STT). Please open this app directly in standard Safari/Chrome, or switch to <b>"Manual Input"</b> by clicking the gear icon below.</span>
+                    </div>
+                  )}
                   {transcript ? (
                     <p className="font-semibold">{transcript}</p>
                   ) : textInput && sttProvider !== 'browser' ? (
                     <p className="font-semibold">{textInput}</p>
                   ) : (
-                    <p className="text-[#7A7875] italic">Bài nói tiếng Anh của bạn sẽ được tự động nhận diện và hiển thị tại đây...</p>
+                    <p className="text-[#7A7875] italic">Your spoken English will be automatically recognized and displayed here...</p>
                   )}
                 </div>
 
@@ -465,7 +524,7 @@ export default function VoiceCoach() {
                   <textarea
                     value={textInput}
                     onChange={(e) => setTextInput(e.target.value)}
-                    placeholder="Gõ trực tiếp câu nói của bạn tại đây để kiểm tra..."
+                    placeholder="Type your response directly here to test..."
                     className="w-full h-16 bg-[#FAF9F5] border border-[#E5E3DF] rounded-2xl p-3 text-xs focus:outline-none focus:border-[#2E4036] resize-none shrink-0"
                   />
                 )}
@@ -494,7 +553,7 @@ export default function VoiceCoach() {
                 </div>
                 
                 <p className="text-[9px] font-mono text-[#7A7875] mt-2 tracking-wide font-bold">
-                  {isRecording ? `Ghi âm: ${formatTime(recordingTime)}` : 'TAP TO RECORD VOICE'}
+                  {isRecording ? `Recording: ${formatTime(recordingTime)}` : 'TAP TO RECORD VOICE'}
                 </p>
               </div>
 
@@ -506,7 +565,7 @@ export default function VoiceCoach() {
                   className="w-full h-11 rounded-xl bg-[#1A1A1A] hover:bg-black text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-40 shadow-xs"
                 >
                   {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />}
-                  Phân tích bài nói
+                  Analyze Speech
                 </button>
               </div>
 
@@ -548,7 +607,7 @@ export default function VoiceCoach() {
                     activeTab === 'summary' ? 'border-[#CC5833] text-[#CC5833]' : 'border-transparent text-[#7A7875]'
                   }`}
                 >
-                  Nhận xét
+                  Summary
                 </button>
                 <button
                   onClick={() => setActiveTab('details')}
@@ -556,7 +615,7 @@ export default function VoiceCoach() {
                     activeTab === 'details' ? 'border-[#CC5833] text-[#CC5833]' : 'border-transparent text-[#7A7875]'
                   }`}
                 >
-                  Tiêu chí
+                  Criteria
                 </button>
                 <button
                   onClick={() => setActiveTab('rewrite')}
@@ -564,7 +623,7 @@ export default function VoiceCoach() {
                     activeTab === 'rewrite' ? 'border-[#CC5833] text-[#CC5833]' : 'border-transparent text-[#7A7875]'
                   }`}
                 >
-                  Bản dịch
+                  Rewrite
                 </button>
               </div>
 
@@ -580,18 +639,18 @@ export default function VoiceCoach() {
                       <div className="p-3 rounded-xl border border-[#E5E3DF] bg-white flex items-center gap-2 shadow-2xs">
                         <CheckCircle2 size={16} className="text-green-600 shrink-0" />
                         <div>
-                          <p className="text-[8px] text-[#7A7875] font-mono font-bold uppercase">Hoàn thành</p>
+                          <p className="text-[8px] text-[#7A7875] font-mono font-bold uppercase">Status</p>
                           <p className="text-[10px] font-bold text-[#1A1A1A]">
-                            {assessment.overall_score >= 5.0 ? 'Đạt yêu cầu' : 'Cần cố gắng'}
+                            {assessment.overall_score >= 5.0 ? 'Passed' : 'Needs Effort'}
                           </p>
                         </div>
                       </div>
                       <div className="p-3 rounded-xl border border-[#E5E3DF] bg-white flex items-center gap-2 shadow-2xs">
                         <AlertCircle size={16} className="text-amber-600 shrink-0" />
                         <div>
-                          <p className="text-[8px] text-[#7A7875] font-mono font-bold uppercase">Từ thừa</p>
+                          <p className="text-[8px] text-[#7A7875] font-mono font-bold uppercase">Filler Words</p>
                           <p className="text-[10px] font-bold text-[#1A1A1A]">
-                            {assessment.overall_score >= 7.0 ? 'Hạn chế tốt' : 'Cần kiểm soát'}
+                            {assessment.overall_score >= 7.0 ? 'Well Controlled' : 'Needs Control'}
                           </p>
                         </div>
                       </div>
@@ -627,7 +686,7 @@ export default function VoiceCoach() {
                         "{assessment.natural_rewritten_answer}"
                       </p>
                       <p className="text-[8px] text-[#7A7875] leading-relaxed">
-                        💡 Thử đọc lại câu nói đã được biên soạn bởi AI để ghi nhớ cụm từ tự nhiên và cải thiện phát âm.
+                        💡 Try speaking the AI-rewritten version to learn natural phrasings and improve pronunciation.
                       </p>
                     </div>
                   </div>
@@ -640,13 +699,13 @@ export default function VoiceCoach() {
           {activeView === 'settings' && (
             <div className="absolute inset-0 px-5 py-4 flex flex-col gap-4 overflow-y-auto pb-24">
               <h3 className="font-extrabold text-sm text-[#1A1A1A] pb-2 border-b border-[#E5E3DF] flex items-center gap-1.5 shrink-0">
-                <Settings size={16} className="text-[#2E4036]" /> Cấu hình Coach
+                <Settings size={16} className="text-[#2E4036]" /> Coach Settings
               </h3>
 
               <div className="space-y-4 flex-1">
                 {/* Grading Engine Selection */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Phương thức chấm điểm (LLM)</label>
+                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Grading Method (LLM)</label>
                   <select
                     value={engine}
                     onChange={(e) => setEngine(e.target.value)}
@@ -669,21 +728,21 @@ export default function VoiceCoach() {
                       className="w-full bg-white border border-[#E5E3DF] rounded-xl p-3 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#2E4036]"
                     />
                     <p className="text-[8px] text-[#7A7875] leading-relaxed">
-                      🔑 Key được lưu trực tiếp trên localStorage trình duyệt cá nhân của bạn. Không gửi qua bất kỳ máy chủ trung gian nào. Bảo mật tuyệt đối.
+                      🔑 Key is saved directly in your browser's LocalStorage. Never sent to any intermediary server. Absolute privacy guaranteed.
                     </p>
                   </div>
                 )}
 
                 {/* STT Selection */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Bộ chuyển đổi giọng nói (STT)</label>
+                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Speech-to-Text Engine (STT)</label>
                   <select
                     value={sttProvider}
                     onChange={(e) => setSttProvider(e.target.value)}
                     className="w-full bg-white border border-[#E5E3DF] rounded-xl p-3 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#2E4036]"
                   >
-                    <option value="browser">Browser Web Speech API (NATIVE - Khuyên dùng)</option>
-                    <option value="mechanical">Audio cơ học (Sandbox simulator)</option>
+                    <option value="browser">Browser Web Speech API (NATIVE - Recommended)</option>
+                    <option value="mechanical">Mechanical Audio (Sandbox simulator)</option>
                   </select>
                 </div>
               </div>
@@ -692,7 +751,7 @@ export default function VoiceCoach() {
                 onClick={saveSettings}
                 className="w-full h-11 rounded-xl bg-[#2E4036] hover:bg-[#1E2D25] text-white font-bold text-xs transition-all mt-auto shrink-0 shadow-xs"
               >
-                Lưu cấu hình
+                Save Settings
               </button>
             </div>
           )}
@@ -704,8 +763,8 @@ export default function VoiceCoach() {
           <div className="absolute inset-0 bg-[#FAF9F5]/90 backdrop-blur-xs flex flex-col justify-center items-center gap-4 z-50 animate-in fade-in duration-300">
             <RefreshCw className="animate-spin text-[#2E4036]" size={36} />
             <div className="text-center space-y-1">
-              <h3 className="font-extrabold text-sm text-[#1A1A1A]">AI Coach đang phân tích...</h3>
-              <p className="text-[10px] text-[#7A7875] max-w-[240px] leading-relaxed">Đang đối chiếu thang điểm chuẩn IELTS và đề xuất sửa lỗi từ vựng.</p>
+              <h3 className="font-extrabold text-sm text-[#1A1A1A]">AI Coach is analyzing...</h3>
+              <p className="text-[10px] text-[#7A7875] max-w-[240px] leading-relaxed">Evaluating speech against IELTS/CEFR bands and generating vocabulary enhancements.</p>
             </div>
           </div>
         )}
@@ -716,13 +775,13 @@ export default function VoiceCoach() {
             <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-[2.2rem] p-6 shadow-2xl border-t border-[#E5E3DF] flex flex-col gap-4 max-h-[82%] overflow-y-auto animate-in slide-in-from-bottom duration-300">
               <div className="flex justify-between items-center pb-2 border-b border-[#E5E3DF] shrink-0">
                 <h3 className="font-extrabold text-sm text-[#1A1A1A] flex items-center gap-1.5">
-                  <BookOpen size={16} className="text-[#2E4036]" /> Chọn chủ đề
+                  <BookOpen size={16} className="text-[#2E4036]" /> Select Practice Topic
                 </h3>
                 <button 
                   onClick={() => setShowTopicDrawer(false)}
                   className="text-xs font-bold text-[#CC5833] cursor-pointer"
                 >
-                  Đóng
+                  Close
                 </button>
               </div>
 
@@ -761,18 +820,18 @@ export default function VoiceCoach() {
                       : 'border-[#FAF9F5] hover:border-[#E5E3DF] bg-[#FAF9F5]'
                   }`}
                 >
-                  <p className="font-bold text-[#2E4036] mb-0.5">Chủ đề tự do</p>
-                  <p className="text-[10px] text-[#7A7875]">Tự soạn câu hỏi thực hành riêng theo ý muốn.</p>
+                  <p className="font-bold text-[#2E4036] mb-0.5">Free Style Topic</p>
+                  <p className="text-[10px] text-[#7A7875]">Practice with your own custom target question or topic.</p>
                 </button>
               </div>
 
               {isUsingCustom && (
                 <div className="pt-2 border-t border-[#E5E3DF] flex flex-col gap-2 shrink-0 animate-in fade-in duration-200">
-                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Nội dung chủ đề tự do</label>
+                  <label className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold">Custom Topic Description</label>
                   <textarea
                     value={customPrompt}
                     onChange={(e) => setCustomPrompt(e.target.value)}
-                    placeholder="Nhập nội dung bạn muốn nói..."
+                    placeholder="Enter the prompt or topic you want to discuss..."
                     className="w-full text-xs bg-[#FAF9F5] border border-[#E5E3DF] rounded-xl p-3 text-[#1A1A1A] focus:outline-none focus:border-[#2E4036] resize-none h-16"
                   />
                 </div>
@@ -790,7 +849,7 @@ export default function VoiceCoach() {
             }`}
           >
             <Mic size={20} className={activeView === 'practice' ? 'stroke-[2.5px]' : ''} />
-            <span className="text-[9px] font-bold tracking-wide">Luyện tập</span>
+            <span className="text-[9px] font-bold tracking-wide">Practice</span>
           </button>
           
           <button 
@@ -798,7 +857,7 @@ export default function VoiceCoach() {
               if (assessment) {
                 setActiveView('report');
               } else {
-                setStatusMsg('Hãy nói hoặc ghi âm và bấm Phân tích để mở khóa Báo cáo AI!');
+                setStatusMsg('Please speak or record and click Analyze to unlock the AI Report!');
               }
             }}
             className={`flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
@@ -806,7 +865,7 @@ export default function VoiceCoach() {
             } ${!assessment ? 'opacity-40 cursor-not-allowed' : ''}`}
           >
             <Award size={20} className={activeView === 'report' ? 'stroke-[2.5px]' : ''} />
-            <span className="text-[9px] font-bold tracking-wide">Báo cáo AI</span>
+            <span className="text-[9px] font-bold tracking-wide">AI Report</span>
           </button>
 
           <button 
@@ -816,7 +875,7 @@ export default function VoiceCoach() {
             }`}
           >
             <Settings size={20} className={activeView === 'settings' ? 'stroke-[2.5px]' : ''} />
-            <span className="text-[9px] font-bold tracking-wide">Cấu hình</span>
+            <span className="text-[9px] font-bold tracking-wide">Settings</span>
           </button>
         </div>
 
