@@ -164,26 +164,14 @@ export default function VoiceCoach() {
     
     if (sttProvider === 'browser' && recognitionRef.current) {
       try {
-        // Pre-emptive microphone permission request to trigger OS/Browser prompt reliably
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          // Stop track immediately as Web Speech API will request its own connection
-          tempStream.getTracks().forEach(track => track.stop());
-        }
-      } catch (err) {
-        console.warn('Microphone permission pre-check failed or denied:', err);
-        setStatusMsg('Error: Microphone permission was not granted. Please allow microphone access in your browser settings.');
-        return;
-      }
-
-      try {
+        // CALL SYNCHRONOUSLY FIRST to guarantee Safari/iOS user interaction gesture is preserved
         recognitionRef.current.start();
         setIsRecording(true);
         setRecordingTime(0);
         setStatusMsg('Listening... Speak in English to transcribe.');
       } catch (err) {
         console.error(err);
-        setStatusMsg('Error activating browser speech recognition.');
+        setStatusMsg('Error activating browser speech recognition. Please grant microphone permissions.');
       }
     } else {
       // Standard audio recorder for API fallback
@@ -211,7 +199,7 @@ export default function VoiceCoach() {
         setStatusMsg('Recording mechanical audio... (Sandbox Mode)');
       } catch (err) {
         console.error(err);
-        setStatusMsg('Cannot access microphone.');
+        setStatusMsg('Cannot access microphone. Please grant permission in browser settings.');
       }
     }
   };
