@@ -43,7 +43,7 @@ A powerful, high-fidelity AI-powered Voice Coach and Multi-Provider AI Routing G
 
 ---
 
-## ⚡ Quick Start & Development
+## Quick Start & Development
 
 ### 1. Prerequisite Configuration (`.env`)
 
@@ -104,7 +104,7 @@ npm run dev
 
 ---
 
-## 🚀 Production Deployment
+## Production Deployment
 
 ### Option A: Vercel (Serverless)
 
@@ -139,7 +139,7 @@ If you want to configure the service manually on Render:
 
 ---
 
-## 🤝 Integration Guide for Boss
+## Integration Guide for Boss
 
 To integrate this Voice Coach engine into another existing project:
 
@@ -147,16 +147,4 @@ To integrate this Voice Coach engine into another existing project:
 2. **Audio Transcription:** The `/v1/audio/transcriptions` endpoint handles direct file transcription and computes pause/hesitation metrics.
 3. **Frontend Component:** The page `ui/src/pages/VoiceCoach.jsx` is highly modular and styled with Tailwind CSS, meaning it can easily be copied and integrated into any React/Next.js dashboard.
 
----
 
-## 🧩 Separated Apps
-
-This project can also be deployed as four independent function + web apps:
-
-- AI Feedback: `POST /v1/chat/feedback`, `npm run build:feedback`
-- Job Interview: `POST /v1/chat/interview`, `npm run build:interview`
-- Presentation: `POST /v1/chat/presentation`, `npm run build:presentation`
-- English Speaking: `POST /v1/chat/english`, `npm run build:english`
-- Social EQ: `POST /v1/chat/social`, `npm run build:social` — mobile-first roleplay demo with the `Đòi nợ bạn thân` scenario, 10-message cap, paid hints, and Daniel Goleman EQ scoring.
-
-See `SEPARATED_APPS.md` for the separate Vercel config files and deploy commands.
