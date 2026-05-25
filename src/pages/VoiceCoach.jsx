@@ -384,6 +384,7 @@ export default function VoiceCoach() {
       const parsed = JSON.parse(rawText.trim());
       setAssessment(parsed);
       setStatusMsg('Received feedback from AI Coach.');
+      setActiveView('report');
     } catch (err) {
       console.error(err);
       setStatusMsg(`AI Coach evaluation failed: ${err.message}.`);
@@ -400,6 +401,8 @@ export default function VoiceCoach() {
       return;
     }
     
+    setActiveTab('summary');
+    setActiveView('report');
     analyzeWithGemini(textToAnalyze);
   };
 
@@ -571,8 +574,32 @@ export default function VoiceCoach() {
             </div>
           )}
 
+          {activeView === 'report' && isLoading && (
+            <div className="absolute inset-0 px-5 py-4 flex flex-col items-center justify-center gap-4 text-center pb-24">
+              <Loader2 className="animate-spin text-[#CC5833]" size={36} />
+              <h3 className="font-extrabold text-sm text-[#1A1A1A]">AI Coach is analyzing...</h3>
+              <p className="text-[11px] text-[#7A7875] max-w-[240px] leading-relaxed">
+                Building your speaking score, criteria feedback, and natural rewrite.
+              </p>
+            </div>
+          )}
+
+          {activeView === 'report' && !isLoading && !assessment && (
+            <div className="absolute inset-0 px-5 py-4 flex flex-col items-center justify-center gap-4 text-center pb-24">
+              <AlertCircle className="text-[#CC5833]" size={34} />
+              <h3 className="font-extrabold text-sm text-[#1A1A1A]">No AI feedback yet</h3>
+              <p className="text-[11px] text-[#7A7875] max-w-[250px] leading-relaxed">{statusMsg}</p>
+              <button
+                onClick={() => setActiveView('practice')}
+                className="h-10 px-4 rounded-xl bg-[#2E4036] text-white text-xs font-bold"
+              >
+                Back to practice
+              </button>
+            </div>
+          )}
+
           {/* B. REPORT PANEL */}
-          {activeView === 'report' && assessment && (
+          {activeView === 'report' && !isLoading && assessment && (
             <div className="absolute inset-0 px-5 py-4 flex flex-col gap-4 overflow-y-auto pb-24">
               
               {/* High-fidelity summary scores card */}
