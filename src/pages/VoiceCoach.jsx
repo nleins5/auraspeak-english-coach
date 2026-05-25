@@ -372,6 +372,47 @@ export default function VoiceCoach() {
     }
   };
 
+  const parseAIJsonResponse = (rawText) => {
+    const text = String(rawText || '').trim();
+    try {
+      return JSON.parse(text);
+    } catch {
+      const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      const candidate = jsonMatch?.[1] || text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1);
+      return JSON.parse(candidate);
+    }
+  };
+
+  const toList = (value) => {
+    if (!value) return [];
+    return Array.isArray(value) ? value.filter(Boolean) : [String(value)];
+  };
+
+  const normalizeEnglishAssessment = (raw) => {
+    const sourceCategories = raw.categories && typeof raw.categories === 'object' ? raw.categories : {};
+    const categories = Object.fromEntries(
+      Object.entries(sourceCategories).map(([key, item]) => [
+        key,
+        {
+          ...item,
+          score: item?.score ?? 'N/A',
+          feedback: toList(item?.feedback).join(' ') || toList(item?.weaknesses).join(' ') || 'AI chưa trả feedback chi tiết cho mục này.',
+        }
+      ])
+    );
+
+    return {
+      ...raw,
+      overall_score: raw.overall_score ?? raw.score ?? 'N/A',
+      estimated_cefr: raw.estimated_cefr || raw.cefr || 'N/A',
+      brutally_honest_summary: raw.brutally_honest_summary || raw.summary || 'AI đã chấm xong nhưng chưa trả nhận xét tổng quan.',
+      categories: Object.keys(categories).length ? categories : {
+        fluency: { score: 'N/A', feedback: 'Cần thêm dữ liệu để đánh giá độ trôi chảy.' },
+      },
+      natural_rewritten_answer: raw.natural_rewritten_answer || raw.ideal_rewritten_answer || raw.better_version || 'AI chưa trả bản viết lại tự nhiên cho đoạn nói này.',
+    };
+  };
+
 
   // Call AI Coaching API via Unified Router AI Endpoint
   const analyzeWithGemini = async (textToAnalyze) => {
@@ -406,7 +447,7 @@ export default function VoiceCoach() {
 
       const data = await response.json();
       const rawText = data.answer;
-      const parsed = JSON.parse(rawText.trim());
+      const parsed = normalizeEnglishAssessment(parseAIJsonResponse(rawText));
       setAssessment(parsed);
       setStatusMsg('Received feedback from AI Coach.');
       setActiveView('report');
