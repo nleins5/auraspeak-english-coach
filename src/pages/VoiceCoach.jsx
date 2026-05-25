@@ -395,8 +395,7 @@ export default function VoiceCoach() {
           headers: headers,
           body: JSON.stringify({
             query: textToAnalyze,
-            task: 'english',
-            model_override: 'gemini'
+            task: 'english'
           })
         }
       );
