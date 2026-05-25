@@ -20,7 +20,10 @@ export default function VoiceCoach() {
     if (saved && saved.trim() !== '') return saved;
     return import.meta.env.VITE_GEMINI_API_KEY || '';
   });
-  const [sttProvider, setSttProvider] = useState(() => localStorage.getItem('eng_coach_stt') || 'cloud');
+  const [sttProvider, setSttProvider] = useState(() => {
+    const saved = localStorage.getItem('eng_coach_stt');
+    return saved && saved !== 'browser' ? saved : 'cloud';
+  });
   const [, setShowSettings] = useState(false);
   const [activeView, setActiveView] = useState('practice'); // practice, report, settings
   const [showTopicDrawer, setShowTopicDrawer] = useState(false);
@@ -49,11 +52,14 @@ export default function VoiceCoach() {
   const recognitionRef = useRef(null);
   const timerRef = useRef(null);
   const audioUploadRef = useRef(null);
+  const recordingStartedAtRef = useRef(0);
 
   // Save Settings to LocalStorage
   const saveSettings = () => {
+    const nextSttProvider = sttProvider === 'browser' ? 'cloud' : sttProvider;
+    setSttProvider(nextSttProvider);
     localStorage.setItem('eng_coach_gemini_key', geminiKey);
-    localStorage.setItem('eng_coach_stt', sttProvider);
+    localStorage.setItem('eng_coach_stt', nextSttProvider);
     setShowSettings(false);
     setStatusMsg('Settings saved successfully.');
     setActiveView('practice');
@@ -186,6 +192,18 @@ export default function VoiceCoach() {
     }
   };
 
+  const createAudioRecorder = (stream) => {
+    const mimeType = getSupportedAudioMimeType();
+    if (mimeType) {
+      try {
+        return { recorder: new MediaRecorder(stream, { mimeType }), mimeType };
+      } catch (err) {
+        console.warn('Preferred MediaRecorder MIME failed, falling back:', err);
+      }
+    }
+    return { recorder: new MediaRecorder(stream), mimeType: '' };
+  };
+
   // Start Voice Recording
   const startRecording = async () => {
     setTranscript('');
@@ -217,12 +235,18 @@ export default function VoiceCoach() {
       try {
         isRecordingRef.current = true;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mimeType = getSupportedAudioMimeType();
-        mediaRecorderRef.current = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        const { recorder, mimeType } = createAudioRecorder(stream);
+        mediaRecorderRef.current = recorder;
+        recordingStartedAtRef.current = Date.now();
         mediaRecorderRef.current.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunksRef.current.push(e.data);
         };
         mediaRecorderRef.current.onstop = async () => {
+          if (!audioChunksRef.current.length) {
+            stopRecorderTracks();
+            setStatusMsg('No audio data was recorded. Please try again and check microphone permission.');
+            return;
+          }
           const recordedType = mediaRecorderRef.current?.mimeType || audioChunksRef.current[0]?.type || mimeType || 'audio/webm';
           const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
           const extension = getAudioExtension(recordedType);
@@ -233,6 +257,7 @@ export default function VoiceCoach() {
               const formData = new FormData();
               formData.append('file', audioBlob, `recording.${extension}`);
               formData.append('language', 'en'); // English Speeches
+              formData.append('client_duration', ((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1));
               
               const res = await fetch('/v1/audio/transcriptions', {
                 method: 'POST',
@@ -253,7 +278,7 @@ export default function VoiceCoach() {
               }
             } catch (err) {
               console.error('Cloud Whisper STT failed:', err);
-              setStatusMsg(`Cloud Whisper failed: ${err.message}. Please try again or switch to Browser STT in settings.`);
+              setStatusMsg(`Cloud Whisper failed: ${err.message}. Please try again, upload an audio file, or use text input.`);
             } finally {
               setIsLoading(false);
             }
@@ -262,7 +287,7 @@ export default function VoiceCoach() {
           }
           stopRecorderTracks();
         };
-        mediaRecorderRef.current.start();
+        mediaRecorderRef.current.start(1000);
         setIsRecording(true);
         setRecordingTime(0);
         if (sttProvider === 'cloud') {
@@ -290,6 +315,7 @@ export default function VoiceCoach() {
       }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         try {
+          mediaRecorderRef.current.requestData?.();
           mediaRecorderRef.current.stop();
         } catch {
           // Ignore stop errors when recorder is already inactive.
@@ -767,7 +793,6 @@ export default function VoiceCoach() {
                     onChange={(e) => setSttProvider(e.target.value)}
                     className="w-full bg-white border border-[#E5E3DF] rounded-xl p-3 text-xs text-[#1A1A1A] focus:outline-none focus:border-[#2E4036]"
                   >
-                    <option value="browser">Browser Web Speech API (NATIVE)</option>
                     <option value="cloud">Cloud Whisper API (Highly Accurate)</option>
                   </select>
                 </div>
