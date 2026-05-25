@@ -158,6 +158,32 @@ export default function VoiceCoach() {
     return `${m}:${s}`;
   };
 
+  const getSupportedAudioMimeType = () => {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+    return [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4;codecs=mp4a.40.2',
+      'audio/mp4',
+      'audio/aac',
+      'audio/ogg;codecs=opus',
+    ].find(type => MediaRecorder.isTypeSupported(type)) || '';
+  };
+
+  const getAudioExtension = (mimeType = '') => {
+    if (mimeType.includes('mp4') || mimeType.includes('aac')) return 'm4a';
+    if (mimeType.includes('ogg')) return 'ogg';
+    if (mimeType.includes('wav')) return 'wav';
+    return 'webm';
+  };
+
+  const stopRecorderTracks = () => {
+    const stream = mediaRecorderRef.current?.stream;
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+  };
+
   // Start Voice Recording
   const startRecording = async () => {
     setTranscript('');
@@ -182,21 +208,28 @@ export default function VoiceCoach() {
         setStatusMsg('Browser does not support audio recording.');
         return;
       }
+      if (typeof MediaRecorder === 'undefined') {
+        setStatusMsg('Browser does not support recording. Please open in a recent Chrome or Safari version.');
+        return;
+      }
       try {
         isRecordingRef.current = true;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorderRef.current = new MediaRecorder(stream);
+        const mimeType = getSupportedAudioMimeType();
+        mediaRecorderRef.current = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
         mediaRecorderRef.current.ondataavailable = (e) => {
           if (e.data.size > 0) audioChunksRef.current.push(e.data);
         };
         mediaRecorderRef.current.onstop = async () => {
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+          const recordedType = mediaRecorderRef.current?.mimeType || audioChunksRef.current[0]?.type || mimeType || 'audio/webm';
+          const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
+          const extension = getAudioExtension(recordedType);
           if (sttProvider === 'cloud') {
             setStatusMsg('Recording completed. Sending to Cloud Whisper for high-accuracy STT...');
             setIsLoading(true);
             try {
               const formData = new FormData();
-              formData.append('file', audioBlob, 'recording.wav');
+              formData.append('file', audioBlob, `recording.${extension}`);
               formData.append('language', 'en'); // English Speeches
               
               const res = await fetch('/v1/audio/transcriptions', {
@@ -225,6 +258,7 @@ export default function VoiceCoach() {
           } else {
             setStatusMsg('Recording completed. Review transcript or click Analyze Speech.');
           }
+          stopRecorderTracks();
         };
         mediaRecorderRef.current.start();
         setIsRecording(true);
