@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { 
   GraduationCap, Mic, Square, Settings, Volume2, Play, Pause, Loader2,
   Sparkles, BookOpen, Award, AlertCircle, CheckCircle2, 
-  ChevronRight, RefreshCw
+  ChevronRight, RefreshCw, Upload
 } from 'lucide-react';
 import gsap from 'gsap';
 
@@ -38,6 +38,7 @@ export default function VoiceCoach() {
   
   // Analytics States
   const [isLoading, setIsLoading] = useState(false);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
   const [assessment, setAssessment] = useState(null);
   const [activeTab, setActiveTab] = useState('summary'); // summary, details, rewrite
   const [textInput, setTextInput] = useState('');
@@ -47,6 +48,7 @@ export default function VoiceCoach() {
   const audioChunksRef = useRef([]);
   const recognitionRef = useRef(null);
   const timerRef = useRef(null);
+  const audioUploadRef = useRef(null);
 
   // Save Settings to LocalStorage
   const saveSettings = () => {
@@ -298,6 +300,52 @@ export default function VoiceCoach() {
     }
   };
 
+  const handleAudioUpload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setTranscript('');
+    setTextInput('');
+    setAssessment(null);
+    setIsUploadingAudio(true);
+    setStatusMsg(`Uploading "${file.name}" for speech-to-text...`);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file, file.name || 'uploaded-audio');
+      formData.append('language', 'en');
+      formData.append('client_duration', '0');
+
+      const response = await fetch('/v1/audio/transcriptions', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`STT failed: HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.error) {
+        setStatusMsg(`Voice upload failed: ${data.error}`);
+        return;
+      }
+
+      if (data.text) {
+        setTranscript(data.text.trim());
+        setStatusMsg('Voice upload transcribed successfully. Review transcript or click Analyze.');
+      } else {
+        setStatusMsg('No speech could be detected in this voice file.');
+      }
+    } catch (err) {
+      console.error('Audio upload STT error:', err);
+      setStatusMsg(`Voice upload failed: ${err.message || err}`);
+    } finally {
+      setIsUploadingAudio(false);
+    }
+  };
+
 
   // Call AI Coaching API via Unified Router AI Endpoint
   const analyzeWithGemini = async (textToAnalyze) => {
@@ -472,7 +520,8 @@ export default function VoiceCoach() {
                   
                   <button
                     onClick={isRecording ? stopRecording : startRecording}
-                    className={`w-16 h-16 rounded-full flex items-center justify-center shadow-md transition-all transform cursor-pointer z-10 ${
+                    disabled={isUploadingAudio}
+                    className={`w-16 h-16 rounded-full flex items-center justify-center shadow-md transition-all transform cursor-pointer z-10 disabled:opacity-50 disabled:cursor-not-allowed ${
                       isRecording 
                         ? 'bg-[#CC5833] text-white hover:scale-95' 
                         : 'bg-[#2E4036] hover:bg-[#1E2D25] text-white hover:scale-105'
@@ -485,13 +534,29 @@ export default function VoiceCoach() {
                 <p className="text-[9px] font-mono text-[#7A7875] mt-2 tracking-wide font-bold">
                   {isRecording ? `Recording: ${formatTime(recordingTime)}` : 'TAP TO RECORD VOICE'}
                 </p>
+                <input
+                  ref={audioUploadRef}
+                  type="file"
+                  accept="audio/*,.m4a,.mp3,.wav,.webm,.ogg,.aac"
+                  onChange={handleAudioUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => audioUploadRef.current?.click()}
+                  disabled={isRecording || isUploadingAudio}
+                  className="mt-2 h-8 px-3 rounded-xl border border-[#E5E3DF] bg-white hover:bg-[#FAF9F5] text-[#2E4036] text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isUploadingAudio ? <Loader2 className="animate-spin" size={12} /> : <Upload size={12} />}
+                  Upload voice
+                </button>
               </div>
 
               {/* Action submission buttons */}
               <div className="flex gap-2 shrink-0">
                 <button
                   onClick={handleAnalyze}
-                  disabled={isLoading || isRecording}
+                  disabled={isLoading || isRecording || isUploadingAudio}
                   className="w-full h-11 rounded-xl bg-[#1A1A1A] hover:bg-black text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all disabled:opacity-40 shadow-xs"
                 >
                   {isLoading ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />}
