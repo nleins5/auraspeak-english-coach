@@ -86,8 +86,7 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": f"Internal Server Error: {str(exc)}"}
     )
 
-# Serve Vite UI. Antigravity repos build into root/dist; the original
-# voice-function monorepo built into ui/dist.
+# Serve Vite UI. The frontend compiles into the dist directory.
 root_path = os.path.dirname(os.path.dirname(__file__))
 ui_path = os.path.join(root_path, "dist")
 if not os.path.exists(ui_path):
