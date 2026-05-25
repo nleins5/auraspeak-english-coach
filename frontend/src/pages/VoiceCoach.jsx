@@ -291,12 +291,6 @@ export default function VoiceCoach() {
     ].find(type => MediaRecorder.isTypeSupported(type)) || '';
   };
 
-  const getAudioExtension = (mimeType = '') => {
-    if (mimeType.includes('mp4') || mimeType.includes('aac')) return 'm4a';
-    if (mimeType.includes('ogg')) return 'ogg';
-    if (mimeType.includes('wav')) return 'wav';
-    return 'webm';
-  };
 
   const stopRecorderTracks = () => {
     const stream = mediaRecorderRef.current?.stream || wavRecorderRef.current?.stream;
@@ -374,10 +368,11 @@ export default function VoiceCoach() {
         setStatusMsg('Browser does not support audio recording.');
         return;
       }
+      const startTime = Date.now();
       try {
         isRecordingRef.current = true;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        recordingStartedAtRef.current = Date.now();
+        recordingStartedAtRef.current = startTime;
 
         if (sttProvider === 'cloud') {
           // Use browser-native high-compatibility mono WAV recorder
@@ -399,8 +394,6 @@ export default function VoiceCoach() {
               setStatusMsg('No audio data was recorded. Please try again and check microphone permission.');
               return;
             }
-            const recordedType = mediaRecorderRef.current?.mimeType || audioChunksRef.current[0]?.type || mimeType || 'audio/webm';
-            const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
             setStatusMsg('Recording completed. Review transcript or click Analyze Speech.');
             stopRecorderTracks();
           };
