@@ -535,9 +535,11 @@ export default function VoiceCoach() {
                   <BookOpen size={10} /> Active Prompt
                 </div>
                 <h3 className="text-xs font-extrabold text-[#F2F0E9] mb-1">{isUsingCustom ? 'Free Topic' : activePrompt.topic}</h3>
-                <p className="text-xs font-serif italic text-white/95 leading-relaxed">
-                  "{isUsingCustom ? (customPrompt || 'Enter your custom question below...') : activePrompt.desc}"
-                </p>
+                <div className="max-h-[120px] overflow-y-auto pr-1 custom-scrollbar text-left scroll-smooth select-text">
+                  <p className="text-xs font-serif italic text-white/95 leading-relaxed">
+                    "{isUsingCustom ? (customPrompt || 'Enter your custom question below...') : activePrompt.desc}"
+                  </p>
+                </div>
                 
                 <button
                   onClick={() => setShowTopicDrawer(true)}
@@ -548,7 +550,7 @@ export default function VoiceCoach() {
               </div>
 
               {/* Speech transcript output block */}
-              <div className="bg-white rounded-[2.2rem] border border-[#E5E3DF] p-5 shadow-2xs flex-1 flex flex-col gap-3 min-h-[140px] relative overflow-hidden">
+              <div className="bg-white rounded-[2.2rem] border border-[#E5E3DF] p-5 shadow-2xs flex-1 flex flex-col gap-3 min-h-[260px] relative overflow-hidden">
                 <div className="text-[9px] font-mono text-[#2E4036] uppercase tracking-wider font-bold shrink-0">Live Transcript</div>
                 
                 <div className="flex-1 overflow-y-auto text-xs text-[#1A1A1A] leading-relaxed pr-1 select-text">
@@ -572,7 +574,7 @@ export default function VoiceCoach() {
                     value={textInput}
                     onChange={(e) => setTextInput(e.target.value)}
                     placeholder="Type your response directly here to test..."
-                    className="w-full h-16 bg-[#FAF9F5] border border-[#E5E3DF] rounded-2xl p-3 text-xs focus:outline-none focus:border-[#2E4036] resize-none shrink-0"
+                    className="w-full h-28 bg-[#FAF9F5] border border-[#E5E3DF] rounded-2xl p-3 text-xs focus:outline-none focus:border-[#2E4036] resize-y min-h-[96px] shrink-0"
                   />
                 )}
               </div>
@@ -923,7 +925,7 @@ export default function VoiceCoach() {
                     value={customPrompt}
                     onChange={(e) => setCustomPrompt(e.target.value)}
                     placeholder="Enter the prompt or topic you want to discuss..."
-                    className="w-full text-xs bg-[#FAF9F5] border border-[#E5E3DF] rounded-xl p-3 text-[#1A1A1A] focus:outline-none focus:border-[#2E4036] resize-none h-16"
+                    className="w-full h-32 min-h-[96px] text-xs bg-[#FAF9F5] border border-[#E5E3DF] rounded-xl p-3 text-[#1A1A1A] focus:outline-none focus:border-[#2E4036] resize-y"
                   />
                 </div>
               )}
