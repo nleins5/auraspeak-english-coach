@@ -15,6 +15,7 @@ const ENGLISH_PROMPTS = [
 ];
 
 export default function VoiceCoach() {
+  const apiBase = import.meta.env.VITE_API_BASE || '';
   const [geminiKey, setGeminiKey] = useState(() => {
     const saved = localStorage.getItem('eng_coach_gemini_key');
     if (saved && saved.trim() !== '') return saved;
@@ -259,7 +260,7 @@ export default function VoiceCoach() {
               formData.append('language', 'en'); // English Speeches
               formData.append('client_duration', ((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1));
               
-              const res = await fetch('/v1/audio/transcriptions', {
+              const res = await fetch(`${apiBase}/v1/audio/transcriptions`, {
                 method: 'POST',
                 body: formData,
               });
@@ -343,7 +344,7 @@ export default function VoiceCoach() {
       formData.append('language', 'en');
       formData.append('client_duration', '0');
 
-      const response = await fetch('/v1/audio/transcriptions', {
+      const response = await fetch(`${apiBase}/v1/audio/transcriptions`, {
         method: 'POST',
         body: formData
       });
@@ -430,7 +431,7 @@ export default function VoiceCoach() {
       }
 
       const response = await fetch(
-        '/v1/chat/english',
+        `${apiBase}/v1/chat/english`,
         {
           method: 'POST',
           headers: headers,
