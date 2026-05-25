@@ -6,7 +6,118 @@ import {
 } from 'lucide-react';
 import gsap from 'gsap';
 
+// A lightweight browser-native 16kHz mono WAV recorder to avoid Vercel codec issues
+class WavRecorder {
+  constructor(stream) {
+    this.stream = stream;
+    this.audioContext = null;
+    this.scriptProcessor = null;
+    this.mediaStreamSource = null;
+    this.audioBuffers = [];
+    this.recordingSampleRate = 16000;
+  }
+
+  start() {
+    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    const originalSampleRate = this.audioContext.sampleRate;
+    this.mediaStreamSource = this.audioContext.createMediaStreamSource(this.stream);
+    
+    // Create script processor (4096 buffer size, 1 input channel, 1 output channel)
+    this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+    this.audioBuffers = [];
+
+    this.scriptProcessor.onaudioprocess = (event) => {
+      const inputBuffer = event.inputBuffer.getChannelData(0); // Mono channel
+      const downsampledBuffer = this.downsample(inputBuffer, originalSampleRate, this.recordingSampleRate);
+      this.audioBuffers.push(downsampledBuffer);
+    };
+
+    this.mediaStreamSource.connect(this.scriptProcessor);
+    this.scriptProcessor.connect(this.audioContext.destination);
+  }
+
+  stop() {
+    if (this.scriptProcessor) {
+      this.scriptProcessor.disconnect();
+      this.mediaStreamSource.disconnect();
+    }
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close();
+    }
+
+    // Flatten buffers
+    const totalLength = this.audioBuffers.reduce((acc, buf) => acc + buf.length, 0);
+    const resultBuffer = new Float32Array(totalLength);
+    let offset = 0;
+    for (const buf of this.audioBuffers) {
+      resultBuffer.set(buf, offset);
+      offset += buf.length;
+    }
+
+    // Encode to WAV
+    return this.encodeWAV(resultBuffer, this.recordingSampleRate);
+  }
+
+  downsample(buffer, fromRate, toRate) {
+    if (fromRate === toRate) {
+      return new Float32Array(buffer);
+    }
+    const sampleRateRatio = fromRate / toRate;
+    const newLength = Math.round(buffer.length / sampleRateRatio);
+    const result = new Float32Array(newLength);
+    let offsetResult = 0;
+    let offsetBuffer = 0;
+    while (offsetResult < result.length) {
+      const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+      let accum = 0;
+      let count = 0;
+      for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+        accum += buffer[i];
+        count++;
+      }
+      result[offsetResult] = count > 0 ? accum / count : 0;
+      offsetResult++;
+      offsetBuffer = nextOffsetBuffer;
+    }
+    return result;
+  }
+
+  encodeWAV(samples, sampleRate) {
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+
+    this.writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    this.writeString(view, 8, 'WAVE');
+    this.writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    this.writeString(view, 36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+
+    return new Blob([view], { type: 'audio/wav' });
+  }
+
+  writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  }
+}
+
 // Pre-defined practice prompts for English Speaking
+
 const ENGLISH_PROMPTS = [
   { id: 1, topic: "Daily Routine", desc: "Describe your typical day. What's your favorite part of the day and why?" },
   { id: 2, topic: "Future Aspirations", desc: "Where do you see yourself in five years? What skills are you currently working on?" },
@@ -49,6 +160,7 @@ export default function VoiceCoach() {
 
   // Refs for audio / speech
   const mediaRecorderRef = useRef(null);
+  const wavRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recognitionRef = useRef(null);
   const timerRef = useRef(null);
@@ -187,7 +299,7 @@ export default function VoiceCoach() {
   };
 
   const stopRecorderTracks = () => {
-    const stream = mediaRecorderRef.current?.stream;
+    const stream = mediaRecorderRef.current?.stream || wavRecorderRef.current?.stream;
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
@@ -205,6 +317,41 @@ export default function VoiceCoach() {
     return { recorder: new MediaRecorder(stream), mimeType: '' };
   };
 
+  const uploadAudioForTranscription = async (audioBlob, extension) => {
+    setStatusMsg('Recording completed. Sending to Cloud Whisper for high-accuracy STT...');
+    setIsLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', audioBlob, `recording.${extension}`);
+      formData.append('language', 'en'); // English Speaking Coach
+      formData.append('client_duration', ((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1));
+      
+      const res = await fetch(`${apiBase}/v1/audio/transcriptions`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Whisper API failure: ${res.status} - ${errText}`);
+      }
+      
+      const data = await res.json();
+      if (data && data.text) {
+        setTranscript(data.text.trim());
+        setStatusMsg('Cloud Whisper transcription successful. Review transcript below or click Analyze.');
+      } else {
+        throw new Error('No transcript text returned from server.');
+      }
+    } catch (err) {
+      console.error('Cloud Whisper STT failed:', err);
+      setStatusMsg(`Cloud Whisper failed: ${err.message}. Please try again, upload an audio file, or use text input.`);
+    } finally {
+      setIsLoading(false);
+      stopRecorderTracks();
+    }
+  };
+
   // Start Voice Recording
   const startRecording = async () => {
     setTranscript('');
@@ -214,7 +361,6 @@ export default function VoiceCoach() {
     if (sttProvider === 'browser' && recognitionRef.current) {
       try {
         isRecordingRef.current = true;
-        // CALL SYNCHRONOUSLY FIRST to guarantee Safari/iOS user interaction gesture is preserved
         recognitionRef.current.start();
         setIsRecording(true);
         setRecordingTime(0);
@@ -224,71 +370,43 @@ export default function VoiceCoach() {
         setStatusMsg('Error activating browser speech recognition. Please grant microphone permissions.');
       }
     } else {
-      // Standard audio recorder for API fallback
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setStatusMsg('Browser does not support audio recording.');
-        return;
-      }
-      if (typeof MediaRecorder === 'undefined') {
-        setStatusMsg('Browser does not support recording. Please open in a recent Chrome or Safari version.');
         return;
       }
       try {
         isRecordingRef.current = true;
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const { recorder, mimeType } = createAudioRecorder(stream);
-        mediaRecorderRef.current = recorder;
         recordingStartedAtRef.current = Date.now();
-        mediaRecorderRef.current.ondataavailable = (e) => {
-          if (e.data.size > 0) audioChunksRef.current.push(e.data);
-        };
-        mediaRecorderRef.current.onstop = async () => {
-          if (!audioChunksRef.current.length) {
-            stopRecorderTracks();
-            setStatusMsg('No audio data was recorded. Please try again and check microphone permission.');
+
+        if (sttProvider === 'cloud') {
+          // Use browser-native high-compatibility mono WAV recorder
+          wavRecorderRef.current = new WavRecorder(stream);
+          wavRecorderRef.current.start();
+        } else {
+          if (typeof MediaRecorder === 'undefined') {
+            setStatusMsg('Browser does not support recording. Please open in a recent Chrome or Safari version.');
             return;
           }
-          const recordedType = mediaRecorderRef.current?.mimeType || audioChunksRef.current[0]?.type || mimeType || 'audio/webm';
-          const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
-          const extension = getAudioExtension(recordedType);
-          if (sttProvider === 'cloud') {
-            setStatusMsg('Recording completed. Sending to Cloud Whisper for high-accuracy STT...');
-            setIsLoading(true);
-            try {
-              const formData = new FormData();
-              formData.append('file', audioBlob, `recording.${extension}`);
-              formData.append('language', 'en'); // English Speeches
-              formData.append('client_duration', ((Date.now() - recordingStartedAtRef.current) / 1000).toFixed(1));
-              
-              const res = await fetch(`${apiBase}/v1/audio/transcriptions`, {
-                method: 'POST',
-                body: formData,
-              });
-              
-              if (!res.ok) {
-                const errText = await res.text();
-                throw new Error(`Whisper API failure: ${res.status} - ${errText}`);
-              }
-              
-              const data = await res.json();
-              if (data && data.text) {
-                setTranscript(data.text.trim());
-                setStatusMsg('Cloud Whisper transcription successful. Review transcript below or click Analyze.');
-              } else {
-                throw new Error('No transcript text returned from server.');
-              }
-            } catch (err) {
-              console.error('Cloud Whisper STT failed:', err);
-              setStatusMsg(`Cloud Whisper failed: ${err.message}. Please try again, upload an audio file, or use text input.`);
-            } finally {
-              setIsLoading(false);
+          const { recorder, mimeType } = createAudioRecorder(stream);
+          mediaRecorderRef.current = recorder;
+          mediaRecorderRef.current.ondataavailable = (e) => {
+            if (e.data.size > 0) audioChunksRef.current.push(e.data);
+          };
+          mediaRecorderRef.current.onstop = async () => {
+            if (!audioChunksRef.current.length) {
+              stopRecorderTracks();
+              setStatusMsg('No audio data was recorded. Please try again and check microphone permission.');
+              return;
             }
-          } else {
+            const recordedType = mediaRecorderRef.current?.mimeType || audioChunksRef.current[0]?.type || mimeType || 'audio/webm';
+            const audioBlob = new Blob(audioChunksRef.current, { type: recordedType });
             setStatusMsg('Recording completed. Review transcript or click Analyze Speech.');
-          }
-          stopRecorderTracks();
-        };
-        mediaRecorderRef.current.start(1000);
+            stopRecorderTracks();
+          };
+          mediaRecorderRef.current.start(1000);
+        }
+
         setIsRecording(true);
         setRecordingTime(0);
         if (sttProvider === 'cloud') {
@@ -304,26 +422,41 @@ export default function VoiceCoach() {
   };
 
   // Stop Recording
-  const stopRecording = () => {
+  const stopRecording = async () => {
     isRecordingRef.current = false;
     if (isRecording) {
       if (sttProvider === 'browser' && recognitionRef.current) {
         try {
           recognitionRef.current.stop();
         } catch {
-          // Ignore stop errors when recognition is already inactive.
+          // Ignore
         }
-      }
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        setIsRecording(false);
+        setStatusMsg('Recording stopped. Click "Analyze Speech" to get feedback.');
+      } else if (sttProvider === 'cloud' && wavRecorderRef.current) {
+        try {
+          setStatusMsg('Recording completed. Processing WAV audio encoding...');
+          const audioBlob = wavRecorderRef.current.stop();
+          setIsRecording(false);
+          await uploadAudioForTranscription(audioBlob, 'wav');
+        } catch (err) {
+          console.error('Failed to stop WavRecorder:', err);
+          setStatusMsg(`Failed to finalize WAV recording: ${err.message}`);
+          stopRecorderTracks();
+          setIsRecording(false);
+        }
+      } else if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         try {
           mediaRecorderRef.current.requestData?.();
           mediaRecorderRef.current.stop();
         } catch {
-          // Ignore stop errors when recorder is already inactive.
+          // Ignore
         }
+        setIsRecording(false);
+        setStatusMsg('Recording stopped. Click "Analyze Speech" to get feedback.');
+      } else {
+        setIsRecording(false);
       }
-      setIsRecording(false);
-      setStatusMsg('Recording stopped. Click "Analyze Speech" to get feedback.');
     }
   };
 
