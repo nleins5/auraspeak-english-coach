@@ -383,7 +383,7 @@ export default function VoiceCoach() {
             setStatusMsg('Browser does not support recording. Please open in a recent Chrome or Safari version.');
             return;
           }
-          const { recorder, mimeType } = createAudioRecorder(stream);
+          const { recorder } = createAudioRecorder(stream);
           mediaRecorderRef.current = recorder;
           mediaRecorderRef.current.ondataavailable = (e) => {
             if (e.data.size > 0) audioChunksRef.current.push(e.data);
